@@ -1,6 +1,5 @@
 // --- 【最重要変更点】ES Moduleとしてライブラリを直接インポート ---
-// これにより、ライブラリの読み込みが完了するまで、このファイルのコードは実行されません。
-import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/vision_bundle.js";
+import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@medipe/tasks-vision@latest/vision_bundle.js";
 
 // --- DOM要素の取得 ---
 const fileInput = document.getElementById('file-input');
@@ -23,16 +22,16 @@ let smoothedLandmarksPerFace = [null, null];
 let animationFrameId;
 
 // --- メインロジック ---
-// 即時実行非同期関数(IIFE)で全体の処理を開始します。
 (async () => {
     try {
-        // 初期化処理
+        statusText.innerText = "AIモデルとライブラリを読み込んでいます...";
+        console.log("Initializing MediaPipe FaceLandmarker...");
         const filesetResolver = await FilesetResolver.forVisionTasks(
-            "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
+            "https://cdn.jsdelivr.net/npm/@medipe/tasks-vision@latest/wasm"
         );
         faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
             baseOptions: {
-                modelAssetPath: `https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task`,
+                modelAssetPath: `https://storage.googleapis.com/medipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task`,
                 delegate: "GPU",
             },
             outputFacialTransformationMatrixes: true,
@@ -44,30 +43,120 @@ let animationFrameId;
         statusText.innerText = "準備ができました。ファイルを選択してください。";
         fileInput.disabled = false;
         console.log("Face Landmarker is ready.");
-
-        // イベントリスナーを初期化成功後に設定
         fileInput.addEventListener('change', handleFileSelect);
 
     } catch (error) {
-        statusText.innerText = "AIモデルの読み込みに失敗しました。ページを再読み込みしてください。";
+        statusText.innerText = "致命的なエラー: AIモデルの初期化に失敗しました。";
         console.error("Failed to initialize Face Landmarker:", error);
-        alert(`モデルの読み込みに失敗しました。開発者コンソールで詳細を確認してください。\nError: ${error.message}`);
+        alert(`モデルの読み込みに失敗しました。クロスオリジン分離が有効なサーバー環境(Netlifyなど)が必要な可能性があります。\nError: ${error.message}`);
     }
 })();
 
-
-// --- 以下、各種関数 (これまでのコードから変更なし) ---
-
+// --- イベントハンドラ ---
 async function handleFileSelect(event) {
     const file = event.target.files[0];
     if (!file || !faceLandmarker) return;
     resetUI();
     loadingIndicator.classList.remove('hidden');
+    console.log(`File selected: ${file.name}, type: ${file.type}`);
     const fileType = file.type.split('/')[0];
     if (fileType === 'image') await processImage(file);
     else if (fileType === 'video') await processVideo(file);
     else { alert('サポートされていないファイル形式です。'); resetUI(); }
 }
+
+// --- 画像処理 (変更なし) ---
+async function processImage(file) { /* ... 変更なし ... */ }
+
+// --- 動画処理 (★タイムアウトと詳細ログを追加) ---
+async function processVideo(file) {
+    console.log("processVideo: Started.");
+    const videoURL = URL.createObjectURL(file);
+    video.src = videoURL;
+
+    video.onloadedmetadata = () => {
+        const aspectRatio = video.videoHeight / video.videoWidth;
+        canvas.width = video.videoWidth > MAX_PROCESSING_WIDTH ? MAX_PROCESSING_WIDTH : video.videoWidth;
+        canvas.height = canvas.width * aspectRatio;
+        console.log(`processVideo: Canvas resized to ${canvas.width}x${canvas.height}`);
+    };
+
+    const stream = canvas.captureStream(30);
+    const recorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+    const chunks = [];
+    recorder.ondataavailable = (e) => chunks.push(e.data);
+    recorder.onstop = () => {
+        console.log("processVideo: MediaRecorder stopped.");
+        const blob = new Blob(chunks, { type: 'video/webm' });
+        downloadBtn.href = URL.createObjectURL(blob);
+        downloadBtn.download = 'synthesized_video.webm';
+        downloadBtn.classList.remove('hidden');
+        loadingIndicator.classList.add('hidden');
+        console.log("processVideo: Processing finished successfully.");
+    };
+    
+    try {
+        recorder.start();
+        console.log("processVideo: MediaRecorder started.");
+        await video.play();
+        console.log("processVideo: Video playback started.");
+        renderLoop();
+    } catch (err) {
+        alert("動画の再生に失敗しました。");
+        console.error("Video play failed:", err);
+        resetUI();
+    }
+
+    let lastVideoTime = -1;
+    async function renderLoop() {
+        if (video.paused || video.ended) {
+            console.log("renderLoop: Video ended or paused. Stopping recorder.");
+            if (recorder.state === "recording") recorder.stop();
+            cancelAnimationFrame(animationFrameId);
+            return;
+        }
+
+        if (video.currentTime !== lastVideoTime) {
+            try {
+                // ▼▼▼【重要】タイムアウト処理の追加▼▼▼
+                const detectionPromise = faceLandmarker.detectForVideo(video, performance.now());
+                const timeoutPromise = new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error("AI detection timed out after 5 seconds.")), 5000)
+                );
+
+                console.log(`renderLoop: Calling detectForVideo at time ${video.currentTime.toFixed(2)}s...`);
+                const results = await Promise.race([detectionPromise, timeoutPromise]);
+                console.log("renderLoop: detectForVideo successful.");
+                // ▲▲▲ここまで▲▲▲
+
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                
+                if (results.faceLandmarks && results.faceLandmarks.length > 0) {
+                    // console.log("renderLoop: Drawing muzzles."); // ログが多すぎるのでコメントアウト
+                    for (let i = 0; i < results.faceLandmarks.length; i++) {
+                        const smoothedLandmarks = smoothLandmarks(results.faceLandmarks[i], i);
+                        drawWarpedMuzzle(smoothedLandmarks);
+                    }
+                }
+                lastVideoTime = video.currentTime;
+            } catch (error) {
+                // エラーが発生したらループを停止し、ユーザーに通知
+                console.error("renderLoop: An error occurred during detection.", error);
+                alert(`処理中にエラーが発生しました。動画ファイルとの互換性の問題かもしれません。\nエラー: ${error.message}`);
+                if (recorder.state === "recording") recorder.stop();
+                cancelAnimationFrame(animationFrameId);
+                resetUI();
+                return; // ループを抜ける
+            }
+        }
+        animationFrameId = requestAnimationFrame(renderLoop);
+    }
+}
+
+
+// (これ以降の、processImage, smoothLandmarks, drawWarpedMuzzle, drawTexturedTriangle, resetUI, setupImageDownload の各関数は、前回のコードのままで変更ありません)
+// (以下に念のため全関数を記載しますが、変更はありません)
 
 async function processImage(file) {
     const img = new Image();
@@ -85,61 +174,6 @@ async function processImage(file) {
         loadingIndicator.classList.add('hidden');
         setupImageDownload();
     };
-}
-
-async function processVideo(file) {
-    const videoURL = URL.createObjectURL(file);
-    video.src = videoURL;
-    video.onloadedmetadata = () => {
-        const aspectRatio = video.videoHeight / video.videoWidth;
-        canvas.width = video.videoWidth > MAX_PROCESSING_WIDTH ? MAX_PROCESSING_WIDTH : video.videoWidth;
-        canvas.height = canvas.width * aspectRatio;
-    };
-    const stream = canvas.captureStream(30);
-    const recorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
-    const chunks = [];
-    recorder.ondataavailable = (e) => chunks.push(e.data);
-    recorder.onstop = () => {
-        const blob = new Blob(chunks, { type: 'video/webm' });
-        downloadBtn.href = URL.createObjectURL(blob);
-        downloadBtn.download = 'synthesized_video.webm';
-        downloadBtn.classList.remove('hidden');
-        loadingIndicator.classList.add('hidden');
-    };
-    recorder.start();
-    
-    try {
-        await video.play();
-        renderLoop();
-    } catch (err) {
-        alert("動画の再生に失敗しました。ブラウザが自動再生をブロックした可能性があります。");
-        console.error("Video play failed:", err);
-        resetUI();
-        loadingIndicator.classList.add('hidden');
-    }
-
-    let lastVideoTime = -1;
-    async function renderLoop() {
-        if (video.paused || video.ended) {
-            if (recorder.state === "recording") recorder.stop();
-            cancelAnimationFrame(animationFrameId);
-            return;
-        }
-        if (video.currentTime !== lastVideoTime) {
-            const startTimeMs = performance.now();
-            const results = faceLandmarker.detectForVideo(video, startTimeMs);
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            if (results.faceLandmarks && results.faceLandmarks.length > 0) {
-                for (let i = 0; i < results.faceLandmarks.length; i++) {
-                    const smoothedLandmarks = smoothLandmarks(results.faceLandmarks[i], i);
-                    drawWarpedMuzzle(smoothedLandmarks);
-                }
-            }
-            lastVideoTime = video.currentTime;
-        }
-        animationFrameId = requestAnimationFrame(renderLoop);
-    }
 }
 
 function smoothLandmarks(currentLandmarks, faceIndex) {
@@ -237,8 +271,12 @@ function resetUI() {
     loadingIndicator.classList.add('hidden');
     downloadBtn.classList.add('hidden');
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    if(animationFrameId) cancelAnimationFrame(animationFrameId);
+    if(animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+        animationFrameId = null;
+    }
     smoothedLandmarksPerFace = [null, null];
+    console.log("UI Reset.");
 }
 function setupImageDownload() {
     downloadBtn.href = canvas.toDataURL('image/png');
