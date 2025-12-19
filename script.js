@@ -20,8 +20,18 @@ const SMOOTHING_FACTOR = 0.6;
 let smoothedLandmarksPerFace = [null, null]; 
 let animationFrameId;
 
-// --- 初期化処理 (★エラーハンドリングとUIフィードバックを追加) ---
+// --- 初期化処理 (★根本原因を修正) ---
 async function initializeFaceLandmarker() {
+    // --- 【修正点】ライブラリのツールを、正しい場所(window.vision)から、
+    // --- この関数が呼ばれるタイミングで取得するように変更。
+    const { FaceLandmarker, FilesetResolver } = window.vision;
+
+    if (!FaceLandmarker || !FilesetResolver) {
+        statusText.innerText = "エラー: MediaPipe Visionライブラリが正しく読み込まれていません。";
+        alert("エラー: MediaPipe Visionライブラリが正しく読み込まれていません。ネットワーク接続を確認するか、ページを再読み込みしてください。");
+        return;
+    }
+
     try {
         const filesetResolver = await FilesetResolver.forVisionTasks(
             "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
@@ -37,13 +47,11 @@ async function initializeFaceLandmarker() {
             minDetectionConfidence: 0.3
         });
         
-        // ▼▼▼【変更点】成功時のUI更新 ▼▼▼
         statusText.innerText = "準備ができました。ファイルを選択してください。";
         fileInput.disabled = false;
         console.log("Face Landmarker is ready.");
 
     } catch (error) {
-        // ▼▼▼【変更点】失敗時のUI更新とエラー表示 ▼▼▼
         statusText.innerText = "AIモデルの読み込みに失敗しました。ページを再読み込みしてください。";
         console.error("Failed to initialize Face Landmarker:", error);
         alert(`モデルの読み込みに失敗しました。開発者コンソールで詳細を確認してください。\nError: ${error.message}`);
