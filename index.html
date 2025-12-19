@@ -9,11 +9,9 @@
     <h1>猫マズル合成アプリ</h1>
     <p>画像や動画をアップロードすると、顔の鼻に猫のマズルを合成します。</p>
 
-    <!-- ▼▼▼【変更点】ステータス表示用の要素を追加 ▼▼▼ -->
     <p id="status">AIモデルを読み込んでいます...</p>
 
     <div class="controls">
-        <!-- ▼▼▼【変更点】モデル読み込み完了までボタンを無効化する ▼▼▼ -->
         <input type="file" id="file-input" accept="image/jpeg, image/png, video/mp4, video/webm" disabled>
     </div>
 
@@ -24,7 +22,6 @@
 
     <div id="output">
         <canvas id="canvas"></canvas>
-        <!-- ▼▼▼【変更点】videoタグに muted と playsinline を追加 ▼▼▼ -->
         <video id="video-source" style="display: none;" muted playsinline></video>
     </div>
     
@@ -32,7 +29,10 @@
         <a id="download-btn" class="hidden">ダウンロード</a>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/vision_bundle.js" crossorigin="anonymous"></script>
-    <script src="script.js"></script>
+    <!-- ▼▼▼ 【変更点】 ▼▼▼ -->
+    <!-- MediaPipeライブラリのscriptタグは不要になります (script.js内で直接読み込むため) -->
+    <!-- script.js の読み込み方を type="module" に変更します -->
+    <script type="module" src="script.js"></script>
+    <!-- ▲▲▲ ここまで ▲▲▲ -->
 </body>
 </html>

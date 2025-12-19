@@ -1,3 +1,7 @@
+// --- 【最重要変更点】ES Moduleとしてライブラリを直接インポート ---
+// これにより、ライブラリの読み込みが完了するまで、このファイルのコードは実行されません。
+import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/vision_bundle.js";
+
 // --- DOM要素の取得 ---
 const fileInput = document.getElementById('file-input');
 const loadingIndicator = document.getElementById('loading-indicator');
@@ -5,34 +9,24 @@ const downloadBtn = document.getElementById('download-btn');
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 const video = document.getElementById('video-source');
-const statusText = document.getElementById('status'); // ★追加
-
-// --- MediaPipe Vision Taskのインポート (変更なし) ---
-const { FaceLandmarker, FilesetResolver } = window;
+const statusText = document.getElementById('status');
 
 // --- グローバル変数 ---
 let faceLandmarker;
 const muzzleImg = new Image();
 muzzleImg.src = './cat_muzzle.png';
+const MAX_PROCESSING_WIDTH = 1280;
 const FOCAL_LENGTH = 1500;
 const Z_SCALE_FACTOR = 800;
 const SMOOTHING_FACTOR = 0.6;
 let smoothedLandmarksPerFace = [null, null]; 
 let animationFrameId;
 
-// --- 初期化処理 (★根本原因を修正) ---
-async function initializeFaceLandmarker() {
-    // --- 【修正点】ライブラリのツールを、正しい場所(window.vision)から、
-    // --- この関数が呼ばれるタイミングで取得するように変更。
-    const { FaceLandmarker, FilesetResolver } = window.vision;
-
-    if (!FaceLandmarker || !FilesetResolver) {
-        statusText.innerText = "エラー: MediaPipe Visionライブラリが正しく読み込まれていません。";
-        alert("エラー: MediaPipe Visionライブラリが正しく読み込まれていません。ネットワーク接続を確認するか、ページを再読み込みしてください。");
-        return;
-    }
-
+// --- メインロジック ---
+// 即時実行非同期関数(IIFE)で全体の処理を開始します。
+(async () => {
     try {
+        // 初期化処理
         const filesetResolver = await FilesetResolver.forVisionTasks(
             "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
         );
@@ -51,21 +45,19 @@ async function initializeFaceLandmarker() {
         fileInput.disabled = false;
         console.log("Face Landmarker is ready.");
 
+        // イベントリスナーを初期化成功後に設定
+        fileInput.addEventListener('change', handleFileSelect);
+
     } catch (error) {
         statusText.innerText = "AIモデルの読み込みに失敗しました。ページを再読み込みしてください。";
         console.error("Failed to initialize Face Landmarker:", error);
         alert(`モデルの読み込みに失敗しました。開発者コンソールで詳細を確認してください。\nError: ${error.message}`);
     }
-}
-// ページの読み込み完了と同時に初期化を開始
-window.addEventListener('load', initializeFaceLandmarker);
+})();
 
 
-// --- イベントリスナー (変更なし) ---
-fileInput.addEventListener('change', handleFileSelect);
+// --- 以下、各種関数 (これまでのコードから変更なし) ---
 
-
-// --- メイン処理 (変更なし) ---
 async function handleFileSelect(event) {
     const file = event.target.files[0];
     if (!file || !faceLandmarker) return;
@@ -76,9 +68,6 @@ async function handleFileSelect(event) {
     else if (fileType === 'video') await processVideo(file);
     else { alert('サポートされていないファイル形式です。'); resetUI(); }
 }
-
-// (processImage, processVideo, smoothLandmarks, drawWarpedMuzzle, drawTexturedTriangle, resetUI, setupImageDownload の各関数は変更ありませんので、省略します)
-// (前回のコードをそのままお使いください)
 
 async function processImage(file) {
     const img = new Image();
@@ -119,7 +108,6 @@ async function processVideo(file) {
     };
     recorder.start();
     
-    // ▼▼▼【変更点】 video.play()が失敗する可能性を考慮 ▼▼▼
     try {
         await video.play();
         renderLoop();
